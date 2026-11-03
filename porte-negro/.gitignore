@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pdf
+*.png
+*.zip
+client_secret*.json
+google-drive.json
+token*.json

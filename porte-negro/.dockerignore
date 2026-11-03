@@ -1,0 +1,6 @@
+.env
+*.json
+*.pdf
+*.zip
+__pycache__
+.venv

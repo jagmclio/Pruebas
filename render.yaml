@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: porte-negro
+    rootDir: porte-negro
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/google-drive.json
