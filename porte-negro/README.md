@@ -10,7 +10,7 @@ Web pública para rectificar cartas de porte del formato DeCA validado y abrir e
 4. Se guarda solo el PDF final en Cloudflare KV. Se vuelven a leer y comparar sus bytes antes de publicar un marcador de integridad. La ruta pública solo sirve documentos publicados cuyo contenido coincide con ese marcador.
 5. El visitante descarga el PDF y recibe su enlace directo. El QR abre el mismo documento en el navegador, sin iniciar sesión.
 
-El original no se modifica ni se publica. Se mantienen los datos ajenos al peso/QR. El QR original debe corresponder al formato probado. La copia rectificada se distingue mediante su nota y no modifica el servicio oficial de Air Products.
+El original no se modifica ni se publica. Se mantienen los datos ajenos al peso/QR. Se admiten QR de origen del servicio DeCA, copias con enlace de Drive y documentos de Porte Negro sin una nota de rectificación previa. La detección se limita a QR para evitar falsos positivos de otros códigos. Los pesos se confirman mediante dos lectores independientes a nivel de caracteres, incluso con fuentes incompletas o palabras fusionadas. La copia rectificada se distingue mediante su nota y no modifica el servicio oficial de Air Products.
 
 El archivo de Cloudflare es persistente y no usa la carpeta temporal de Render. No se configura caducidad automática. La continuidad de los enlaces depende de mantener el dominio, la aplicación, la cuenta y el almacenamiento; no se promete permanencia indefinida. Cualquier persona que reciba un enlace puede abrir el PDF. Los enlaces no se enumeran y las respuestas llevan noindex.
 
