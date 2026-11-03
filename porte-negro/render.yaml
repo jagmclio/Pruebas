@@ -7,5 +7,11 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
     envVars:
-      - key: GOOGLE_APPLICATION_CREDENTIALS
-        value: /etc/secrets/google-drive.json
+      - key: PUBLIC_BASE_URL
+        value: https://porte-negro.onrender.com
+      - key: CF_ACCOUNT_ID
+        sync: false
+      - key: CF_KV_NAMESPACE_ID
+        sync: false
+      - key: CF_API_TOKEN
+        sync: false

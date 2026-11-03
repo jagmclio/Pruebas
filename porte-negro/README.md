@@ -1,40 +1,28 @@
-# Porte Negro
+# Porte Negro · Archivo digital
 
-Web pública para rectificar cartas de porte Carburos / Air Products en el formato DeCA validado. Diseño oscuro con recuadro de arrastre de PDF, adaptable a móvil y sin contraseña de acceso.
+Web pública para rectificar cartas de porte del formato DeCA validado y abrir el PDF actualizado escaneando su QR. Sin registro ni cuenta de Google. Conserva la estética oscura y el recuadro de arrastre.
 
-El servidor Python sirve la página y procesa el documento. Incluye un despliegue gratuito en Render mediante Docker. Sigue [DESPLIEGUE-RENDER.md](DESPLIEGUE-RENDER.md) para configurar el alojamiento y el Drive personal del propietario.
+## Flujo
 
-## Reglas conservadas del complemento
+1. El visitante arrastra el original e introduce el peso real en el único campo Peso (kg).
+2. Se conservan las validaciones del complemento: formato de una página de 842 × 595 puntos, partida y dos totales coincidentes, sin firma digital; peso real de 920 a 990 kg y hasta tres decimales. El intervalo no se muestra junto al campo.
+3. Se reserva un identificador aleatorio y se genera el PDF final con tres pesos, nota fechada, un QR hacia su propia dirección HTTPS y la etiqueta DeCA.
+4. Se guarda solo el PDF final en Cloudflare KV. Se vuelven a leer y comparar sus bytes antes de publicar un marcador de integridad. La ruta pública solo sirve documentos publicados cuyo contenido coincide con ese marcador.
+5. El visitante descarga el PDF y recibe su enlace directo. El QR abre el mismo documento en el navegador, sin iniciar sesión.
 
-- Peso real confirmado: 920–990 kg inclusive, hasta tres decimales, con coma o punto. No se elige ni ajusta automáticamente.
-- PDF original de una página de 842 × 595 puntos, una partida y dos totales coincidentes. Se rechazan formatos distintos, copias rectificadas y firmas digitales.
-- Se actualizan las tres apariciones del peso, el QR, la etiqueta DeCA y una nota fechada en Europe/Madrid. Se conserva el resto de información y se verifica mediante lectura independiente.
-- El original no se sobrescribe. Se sube una copia nueva privada, se regenera con el enlace real de Drive y se reemplazan los bytes del mismo ID antes de habilitar anyone/reader.
-- Los temporales se eliminan al terminar. La copia final permanece en Drive y puede verla quien tenga el enlace. La web no modifica el servicio oficial de Air Products.
+El original no se modifica ni se publica. Se mantienen los datos ajenos al peso/QR. El QR original debe corresponder al formato probado. La copia rectificada se distingue mediante su nota y no modifica el servicio oficial de Air Products.
 
-`corregir.py` es el script original del complemento. No se incluyen cartas de clientes, claves ni tokens en el proyecto. La web muestra cuándo falta conectar Drive y no presenta una simulación como resultado real.
+El archivo de Cloudflare es persistente y no usa la carpeta temporal de Render. No se configura caducidad automática. La continuidad de los enlaces depende de mantener el dominio, la aplicación, la cuenta y el almacenamiento; no se promete permanencia indefinida. Cualquier persona que reciba un enlace puede abrir el PDF. Los enlaces no se enumeran y las respuestas llevan noindex.
 
-## Instalación local
+## Configuración
 
-Con Python 3.12:
+Sigue DESPLIEGUE-RENDER.md. Las únicas variables necesarias son PUBLIC_BASE_URL, CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID y CF_API_TOKEN. La clave queda exclusivamente en Render. No se necesita Google Drive ni OAuth.
 
-```sh
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-export GOOGLE_APPLICATION_CREDENTIALS=/ruta/privada/google-drive.json
-uvicorn app:app --host 127.0.0.1 --port 8000
-```
-
-Para Docker: construye la imagen, monta la autorización como archivo de solo lectura y publica el puerto 10000. Usa HTTPS al publicarla. La variable PORT se respeta en Render.
-
-## Comprobaciones
+## Pruebas
 
 ```sh
-pip install httpx
+pip install -r requirements.txt httpx
 python -m unittest discover -s tests -v
 ```
 
-Las pruebas del flujo de Drive utilizan un servicio simulado: comprueban el ID del archivo, el orden de publicación y la cancelación si no coinciden los bytes o permisos. No sustituyen la prueba final con un original autorizado y Drive conectado, ni la revisión visual del PDF y del QR.
-
-Si falla una creación remota sin devolver ID, revisa Drive antes de reintentar. Si falla una etapa posterior, se intenta eliminar la copia nueva. No hay reintentos automáticos que puedan crear duplicados.
+Las pruebas utilizan un archivo remoto simulado. Verifican que el PDF del QR es el que se publica, que se abre inline sin contraseña, que los originales o subidas incompletas no se exponen y que se cancela si cambian los bytes. Falta la prueba con una carta original autorizada para verificar el documento completo y su aspecto final.

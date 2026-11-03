@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from urllib.parse import urlsplit
 import pdfplumber
 import pymupdf as fitz
 from reportlab.pdfgen import canvas
@@ -44,8 +45,10 @@ def corregir(source,output,weight,url=None,preview=None):
     original_qr=codes[0].text
     if not original_qr.startswith('https://e-transport.airproducts.com/DeCA/'):
         raise ValueError('El QR no corresponde al formato de carta validado.')
-    if url and not re.fullmatch(r'https://drive\.google\.com/file/d/[A-Za-z0-9_-]+/view(?:\?[^\s]*)?',url):
-        raise ValueError('El QR nuevo requiere la URL verificada del archivo en Drive.')
+    if url:
+        parsed=urlsplit(url)
+        if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or not re.fullmatch(r'/documentos/[a-f0-9]{32}\.pdf',parsed.path):
+            raise ValueError('El QR nuevo requiere la dirección HTTPS del PDF en el archivo digital.')
     doc=fitz.open(source)
     if doc.get_sigflags()>0: raise ValueError('El PDF contiene firmas digitales; requiere un flujo de reemision.')
     p=doc[0]
@@ -67,7 +70,7 @@ def corregir(source,output,weight,url=None,preview=None):
         c.drawImage(ImageReader(qr.get_image()),536,519,width=64,height=64)
         c.setFont('Helvetica-Bold',10);c.drawCentredString(568,509,'DeCA')
     else:
-        c.setFont('Helvetica',6);c.drawCentredString(568,548,'QR pendiente de Drive')
+        c.setFont('Helvetica',6);c.drawCentredString(568,548,'QR pendiente de archivo')
     c.save(); overlay=fitz.open(stream=buffer.getvalue(),filetype='pdf');p.show_pdf_page(p.rect,overlay,0)
     output.parent.mkdir(parents=True,exist_ok=True)
     doc.save(output,garbage=4,deflate=True)
@@ -90,7 +93,7 @@ def corregir(source,output,weight,url=None,preview=None):
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--input',required=True);parser.add_argument('--output',required=True)
-    parser.add_argument('--peso',required=True);parser.add_argument('--drive-url');parser.add_argument('--preview')
+    parser.add_argument('--peso',required=True);parser.add_argument('--document-url');parser.add_argument('--preview')
     args=parser.parse_args()
-    try: print(json.dumps(corregir(args.input,args.output,args.peso,args.drive_url,args.preview),ensure_ascii=False))
+    try: print(json.dumps(corregir(args.input,args.output,args.peso,args.document_url,args.preview),ensure_ascii=False))
     except (ValueError,InvalidOperation) as e: parser.exit(2,str(e)+'\n')

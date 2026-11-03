@@ -9,19 +9,19 @@ function show(message,error=false){statusBox.hidden=false;statusBox.textContent=
 form.addEventListener('submit',async e=>{e.preventDefault();result.hidden=true;const f=file.files[0], raw=document.querySelector('#peso').value.trim(), value=Number(raw.replace(',','.'));
 if(!f||!f.name.toLowerCase().endsWith('.pdf'))return show('Selecciona un archivo PDF.',true);
 if(f.size>15*1024*1024)return show('El tamaño máximo es de 15 MB.',true);
-if(!/^\d{3}([,.]\d{1,3})?$/.test(raw)||value<920||value>990)return show('Introduce el peso real entre 920 y 990 kg, con un máximo de tres decimales.',true);
-if (window.CARTA_STATIC_PREVIEW) return show('El PDF está seleccionado. Falta conectar el servidor de rectificación y Google Drive para generar la copia final.',true);
-const body=new FormData();body.append('pdf',f);body.append('peso',raw);body.append('autorizado',document.querySelector('#autorizado').checked?'si':'no');button.disabled=true;form.setAttribute('aria-busy','true');show('Validando el documento, rectificando los pesos y verificando la copia y el QR en Drive…');
+if(!/^\d{3}([,.]\d{1,3})?$/.test(raw)||value<920||value>990)return show('El peso no se puede procesar. Comprueba el valor introducido.',true);
+if (window.CARTA_STATIC_PREVIEW) return show('El PDF está seleccionado. Falta conectar el archivo digital para generar la copia final.',true);
+const body=new FormData();body.append('pdf',f);body.append('peso',raw);body.append('autorizado',document.querySelector('#autorizado').checked?'si':'no');button.disabled=true;form.setAttribute('aria-busy','true');show('Validando el documento, actualizando el peso y verificando el PDF digital y su QR…');
 try{const response=await fetch('/api/rectificar',{method:'POST',body});if(!response.ok){let message='No se ha completado la operación.';try{const data=await response.json();if(typeof data.detail==='string')message=data.detail;}catch{}throw new Error(message);}
-const blob=await response.blob();const link=response.headers.get('X-Drive-URL');if(!link||!/^https:\/\/drive\.google\.com\/file\/d\/[A-Za-z0-9_-]+\/view(?:\?[^\s]*)?$/.test(link))throw new Error('No se recibió un enlace de Drive válido. Revisa Drive antes de reintentar.');
-if(downloadUrl)URL.revokeObjectURL(downloadUrl);downloadUrl=URL.createObjectURL(blob);const download=document.querySelector('#download');download.href=downloadUrl;download.download='carta-rectificada.pdf';document.querySelector('#drive').href=link;document.querySelector('#result-weight').textContent=`Peso total: ${response.headers.get('X-Peso-Kg')} kg · QR y copia final verificados.`;statusBox.hidden=true;result.hidden=false;result.scrollIntoView({behavior:'smooth',block:'nearest'});
-}catch(error){show(error.message||'Se interrumpió la conexión. Revisa Drive antes de reintentar.',true);}finally{button.disabled=false;form.removeAttribute('aria-busy');}});
+const blob=await response.blob();const link=response.headers.get('X-Document-URL');if(!link)throw new Error('No se recibió la dirección del PDF digital.');const target=new URL(link);if(target.origin!==window.location.origin||!/^\/documentos\/[a-f0-9]{32}\.pdf$/.test(target.pathname))throw new Error('La dirección del PDF digital no es válida.');
+if(downloadUrl)URL.revokeObjectURL(downloadUrl);downloadUrl=URL.createObjectURL(blob);const download=document.querySelector('#download');download.href=downloadUrl;download.download='carta-rectificada.pdf';document.querySelector('#document-link').href=link;document.querySelector('#result-weight').textContent=`Peso total: ${response.headers.get('X-Peso-Kg')} kg · QR y copia final verificados.`;statusBox.hidden=true;result.hidden=false;result.scrollIntoView({behavior:'smooth',block:'nearest'});
+}catch(error){show(error.message||'Se interrumpió la conexión. Comprueba la conexión antes de reintentar.',true);}finally{button.disabled=false;form.removeAttribute('aria-busy');}});
 
 // Show the actual configuration state before allowing document generation.
 if (!window.CARTA_STATIC_PREVIEW) {
  button.disabled = true;
  fetch('/api/estado').then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(state => {
    if (state.configurado) { button.disabled = false; }
-   else { const note=document.querySelector('#deployment-note'); note.hidden=false; note.querySelector('p').textContent=state.mensaje; button.textContent='Pendiente de conectar Google Drive'; }
+   else { const note=document.querySelector('#deployment-note'); note.hidden=false; note.querySelector('p').textContent=state.mensaje; button.textContent='Archivo digital en preparación'; }
  }).catch(() => { show('No se ha podido comprobar la conexión del servidor. Recarga la página.',true); });
 }

@@ -1,33 +1,33 @@
-# Despliegue gratuito de Porte Negro
+# Render + archivo digital de Cloudflare
 
-## 1. Publicar el servidor
+La aplicación se ejecuta como Web Service Docker de Render (Free, Frankfurt, /healthz). Render sirve la interfaz y procesa el PDF. Cloudflare KV conserva los documentos fuera de su disco temporal.
 
-Sube el código a un repositorio de GitHub y conéctalo a Render. Crea un Web Service con runtime Docker, región Frankfurt, plan Free y health check `/healthz`. El archivo render.yaml también permite usar un Blueprint con esos valores. El servidor sirve tanto la interfaz como el procesamiento; no necesita Cloudflare Pages. No contrates un plan de pago para esta prueba.
+## Archivo permanente
 
-El servidor arranca aunque Drive esté pendiente y muestra el estado real en la interfaz. Procesa un único PDF a la vez para limitar memoria. No solicita contraseña a los visitantes.
+1. En tu cuenta de Cloudflare → Storage & databases → Workers KV, crea un namespace llamado porte-negro-documentos.
+2. Anota el ID de cuenta y el ID del namespace.
+3. Crea una credencial de API con permiso Account → Workers KV Storage → Edit, restringida a esa cuenta. Este permiso permite leer y escribir KV en la cuenta; revísalo antes de concederlo. No uses la clave global ni concedas acceso DNS.
+4. En Render → Environment guarda:
 
-## 2. Conectar Drive personal del propietario
-
-Esta autorización es del propietario de la web, no de cada visitante. Todos los resultados se guardarán en el Drive del propietario. No compartas contraseñas ni pegues claves en el chat o el repositorio.
-
-1. En Google Cloud, crea o selecciona un proyecto y habilita Google Drive API.
-2. Configura Google Auth Platform para ese proyecto. Crea un cliente OAuth de tipo **Aplicación de escritorio** y descarga su JSON. Utiliza el alcance `https://www.googleapis.com/auth/drive.file`: permite gestionar archivos creados o autorizados para esta aplicación, sin acceso general a todo el Drive.
-3. Si la aplicación está en estado Testing, añade tu Gmail como usuario de prueba. Google normalmente limita a siete días los tokens renovables de aplicaciones externas en Testing con este alcance; configura la publicación adecuada para uso estable. No prometas que el token de prueba será permanente.
-4. Ejecuta en tu ordenador, con las dependencias instaladas:
-
-```sh
-python autorizar_drive.py --cliente /ruta/privada/client_secret.json --salida /ruta/privada/google-drive.json
+```text
+PUBLIC_BASE_URL=https://porte-negro.onrender.com
+CF_ACCOUNT_ID=<ID de cuenta>
+CF_KV_NAMESPACE_ID=<ID del namespace>
+CF_API_TOKEN=<credencial privada>
 ```
 
-Se abrirá el consentimiento de Google. Revísalo y autoriza con la cuenta que recibirá las cartas. Este paso requiere tu intervención.
+5. Despliega la última versión. La página activará la generación cuando tenga configuración. Eso comprueba la presencia de configuración; la conexión real y los bytes se verifican al generar.
 
-5. En Render → servicio → Environment → Secret Files, añade `google-drive.json` con el contenido de ese archivo. Establece `GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/google-drive.json`. Guarda y despliega.
-6. Deja `DRIVE_FOLDER_ID` sin configurar para guardar en Mi unidad. Solo configura una carpeta creada o autorizada por este mismo cliente OAuth; un ID cualquiera no concede acceso con drive.file.
+Cloudflare KV incluye 1 GB y cuotas de operaciones en su plan gratuito. No se contrata un plan de pago. Si se supera la cuota, las operaciones fallarán; el servidor no entregará un resultado que no haya podido archivar. Un PDF usa una entrada de bytes y otra de publicación. El documento sigue accesible después de reiniciar o reconstruir Render.
 
-## 3. Comprobación
+KV tiene consistencia eventual: una escritura nueva puede tardar en propagarse. La aplicación verifica su lectura antes de entregar y devuelve un error temporal si una copia aún no está completa. No hay reintentos automáticos de escritura ni vencimiento automático. Si falla una publicación se intenta eliminar las dos entradas del nuevo ID; ante una interrupción remota ambigua revisa KV.
 
-Abre la URL de Render. Prueba una carta original autorizada y un peso real de 920–990 kg. Revisa los tres pesos, la nota y DeCA bajo el QR. Abre el enlace de Drive sin iniciar sesión y escanea el QR. El servidor comprueba el contenido conservado, el QR, los bytes de la copia subida y el permiso anyone/reader. No se ha realizado una prueba con documentación real hasta contar con el PDF y la autorización de Drive.
+## Dominio y documentos
 
-Después conecta tu dominio desde Settings → Custom Domains. Cloudflare puede seguir gestionando el dominio.
+Las direcciones son https://porte-negro.onrender.com/documentos/<ID aleatorio>.pdf. PUBLIC_BASE_URL se fija en el servidor; no se toma del encabezado Host del visitante. Conserva esa dirección operativa cuando conectes un dominio propio para no romper los QR ya emitidos. Si se utiliza un dominio distinto para la aplicación, adapta la validación de origen en app.js antes de emitir nuevos documentos.
 
-El plan gratuito se suspende por inactividad y tiene límites de recursos; primero mide el consumo con cartas reales. No usa almacenamiento local persistente: los temporales se borran y el PDF final permanece en Drive.
+## Comprobación final
+
+Usa un original autorizado y el peso real. Revisa visualmente los tres pesos, la nota y DeCA. Abre el enlace desde un navegador sin sesión y escanea el QR. Comprueba también que el mismo enlace sigue funcionando tras reiniciar el servidor. No se incluyen documentos ni credenciales en GitHub o el ZIP.
+
+Render Free puede tardar en arrancar después de inactividad; al escanear un QR también puede aparecer esa espera. El archivo sigue guardado en Cloudflare.
