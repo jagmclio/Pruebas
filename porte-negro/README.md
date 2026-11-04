@@ -5,12 +5,12 @@ Web pública para rectificar cartas de porte del formato DeCA validado y abrir e
 ## Flujo
 
 1. El visitante arrastra el original e introduce el peso real en el único campo Peso (kg).
-2. Se conservan las validaciones del complemento: formato de una página de 842 × 595 puntos, partida y dos totales coincidentes, sin firma digital; peso real de 920 a 990 kg y hasta tres decimales. El intervalo no se muestra junto al campo.
-3. Se reserva un identificador aleatorio y se genera el PDF final con tres pesos, nota fechada, un QR hacia su propia dirección HTTPS y la etiqueta DeCA.
+2. Se conservan las validaciones del complemento: formato de una página de 842 × 595 puntos, partida y dos totales coincidentes, sin firma digital; peso real positivo y hasta tres decimales, sin un intervalo mínimo o máximo. Los valores largos se ajustan al ancho de su casilla sin cambiar el número.
+3. Se reserva un identificador aleatorio y se genera el PDF final con tres pesos, un QR hacia su propia dirección HTTPS y la etiqueta DeCA.
 4. Se guarda solo el PDF final en Cloudflare KV. Se vuelven a leer y comparar sus bytes antes de publicar un marcador de integridad. La ruta pública solo sirve documentos publicados cuyo contenido coincide con ese marcador.
 5. El visitante descarga el PDF y recibe su enlace directo. El QR abre el mismo documento en el navegador, sin iniciar sesión.
 
-El original no se modifica ni se publica. Se mantienen los datos ajenos al peso/QR. Se admiten QR de origen del servicio DeCA, copias con enlace de Drive y documentos de Porte Negro sin una nota de rectificación previa. La detección se limita a QR para evitar falsos positivos de otros códigos. Los pesos se confirman mediante dos lectores independientes a nivel de caracteres, incluso con fuentes incompletas o palabras fusionadas. La copia rectificada se distingue mediante su nota y no modifica el servicio oficial de Air Products.
+El original no se modifica ni se publica. Se mantienen los datos ajenos al peso/QR. Se admiten QR de origen del servicio DeCA, copias con enlace de Drive y originales compatibles sin marcas de un procesamiento anterior. La detección se limita a QR para evitar falsos positivos de otros códigos. Los pesos se confirman mediante dos lectores independientes a nivel de caracteres, incluso con fuentes incompletas o palabras fusionadas. No se añade texto de rectificación visible. Se conserva un marcador técnico en los metadatos para evitar procesar de nuevo una copia generada. La aplicación no modifica el servicio oficial de Air Products.
 
 El archivo de Cloudflare es persistente y no usa la carpeta temporal de Render. No se configura caducidad automática. La continuidad de los enlaces depende de mantener el dominio, la aplicación, la cuenta y el almacenamiento; no se promete permanencia indefinida. Cualquier persona que reciba un enlace puede abrir el PDF. Los enlaces no se enumeran y las respuestas llevan noindex.
 

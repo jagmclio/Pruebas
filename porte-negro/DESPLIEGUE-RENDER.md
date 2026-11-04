@@ -28,6 +28,6 @@ Las direcciones son https://porte-negro.onrender.com/documentos/<ID aleatorio>.p
 
 ## Comprobación final
 
-Usa un original autorizado y el peso real. Revisa visualmente los tres pesos, la nota y DeCA. Abre el enlace desde un navegador sin sesión y escanea el QR. Comprueba también que el mismo enlace sigue funcionando tras reiniciar el servidor. No se incluyen documentos ni credenciales en GitHub o el ZIP.
+Usa un original autorizado y el peso real. Revisa visualmente los tres pesos y DeCA. Abre el enlace desde un navegador sin sesión y escanea el QR. Comprueba también que el mismo enlace sigue funcionando tras reiniciar el servidor. No se incluyen documentos ni credenciales en GitHub o el ZIP.
 
 Render Free puede tardar en arrancar después de inactividad; al escanear un QR también puede aparecer esa espera. El archivo sigue guardado en Cloudflare.

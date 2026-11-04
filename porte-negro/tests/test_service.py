@@ -13,6 +13,7 @@ class ServiceTests(unittest.TestCase):
  def test_public_interface_has_plain_weight_and_no_drive(self):
   response=self.client.get('/');self.assertEqual(response.status_code,200)
   self.assertNotIn('Drive',response.text);self.assertNotIn('Entre 920',response.text)
+  self.assertNotIn('de Carburos / Air Products',response.text)
   self.assertIn('Peso (kg)',response.text);self.assertIn('Arrastra aquí la carta de porte',response.text)
   for path in ['/healthz','/static/app.js','/static/style.css']:self.assertEqual(self.client.get(path).status_code,200)
   self.assertEqual(self.client.get('/static/app.py').status_code,404)
@@ -24,11 +25,19 @@ class ServiceTests(unittest.TestCase):
    with patch.dict(os.environ,{'PUBLIC_BASE_URL':value}):self.assertFalse(self.client.get('/api/estado').json()['configurado'])
  def test_rejects_invalid_inputs_without_publication(self):
   with patch.object(service,'process') as process:
-   for weight in ['919.999','990.001','986.1234','abc']:
+   for weight in ['0','-1','NaN','Infinity','1e3','986.1234','abc']:
     r=self.client.post('/api/rectificar',files={'pdf':('x.pdf',b'%PDF-1.7\n')},data={'peso':weight,'autorizado':'si'});self.assertEqual(r.status_code,400)
    r=self.client.post('/api/rectificar',files={'pdf':('x.pdf',b'invalid')},data={'peso':'986,136','autorizado':'si'});self.assertEqual(r.status_code,400)
    r=self.client.post('/api/rectificar',files={'pdf':('x.pdf',b'%PDF-1.7\n')},data={'peso':'986,136','autorizado':'no'});self.assertEqual(r.status_code,400)
    process.assert_not_called()
+ def test_accepts_positive_weights_outside_previous_interval(self):
+  def process(source,folder,weight):return b'%PDF-final','https://porte-negro.onrender.com/documentos/'+'c'*32+'.pdf',weight
+  with patch.object(service,'process',side_effect=process):
+   for value,expected in [('0.001','0,001'),('5','5,000'),('919.999','919,999'),('1250,125','1250,125'),('1000000','1000000,000')]:
+    with self.subTest(value=value):
+     result=self.client.post('/api/rectificar',files={'pdf':('x.pdf',b'%PDF-1.7\n')},data={'peso':value,'autorizado':'si'})
+     self.assertEqual(result.status_code,200)
+     self.assertEqual(result.headers['X-Peso-Kg'],expected)
  def test_pdf_size_limit(self):
   with patch.object(service,'MAX_BYTES',10),patch.object(service,'process') as process:
    r=self.client.post('/api/rectificar',files={'pdf':('x.pdf',b'%PDF-1.7\n'+b'x'*20)},data={'peso':'986,136','autorizado':'si'})

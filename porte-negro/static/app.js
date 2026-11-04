@@ -9,7 +9,7 @@ function show(message,error=false){statusBox.hidden=false;statusBox.textContent=
 form.addEventListener('submit',async e=>{e.preventDefault();result.hidden=true;const f=file.files[0], raw=document.querySelector('#peso').value.trim(), value=Number(raw.replace(',','.'));
 if(!f||!f.name.toLowerCase().endsWith('.pdf'))return show('Selecciona un archivo PDF.',true);
 if(f.size>15*1024*1024)return show('El tamaño máximo es de 15 MB.',true);
-if(!/^\d{3}([,.]\d{1,3})?$/.test(raw)||value<920||value>990)return show('El peso no se puede procesar. Comprueba el valor introducido.',true);
+if(!/^\d+([,.]\d{1,3})?$/.test(raw)||!Number.isFinite(value)||value<=0)return show('Introduce un peso positivo en kg, con hasta tres decimales.',true);
 if (window.CARTA_STATIC_PREVIEW) return show('El PDF está seleccionado. Falta conectar el archivo digital para generar la copia final.',true);
 const body=new FormData();body.append('pdf',f);body.append('peso',raw);body.append('autorizado',document.querySelector('#autorizado').checked?'si':'no');button.disabled=true;form.setAttribute('aria-busy','true');show('Validando el documento, actualizando el peso y verificando el PDF digital y su QR…');
 try{const response=await fetch('/api/rectificar',{method:'POST',body});if(!response.ok){let message='No se ha completado la operación.';try{const data=await response.json();if(typeof data.detail==='string')message=data.detail;}catch{}throw new Error(message);}

@@ -2,25 +2,26 @@
 """Rectifica el peso total de cartas Carburos/Air Products del formato verificado."""
 import argparse, io, json, re
 from decimal import Decimal, InvalidOperation
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 import pdfplumber
 import pymupdf as fitz
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase.pdfmetrics import stringWidth
 import qrcode
 import zxingcpp
 from PIL import Image
 
+PROCESSING_MARKER='PorteNegroProcessedV1'
+
 def peso_real(value):
     value=value.strip().removesuffix('kg').strip()
-    if not re.fullmatch(r'\d{3}(?:[,.]\d{1,3})?',value):
+    if not re.fullmatch(r'\d+(?:[,.]\d{1,3})?',value):
         raise ValueError('Introduce el peso real en kg, sin separador de miles y con hasta 3 decimales.')
     weight=Decimal(value.replace(',','.'))
-    if not Decimal('920') <= weight <= Decimal('990'):
-        raise ValueError('El peso real debe estar entre 920 y 990 kg. No se ha modificado el documento.')
+    if not weight.is_finite() or weight<=0:
+        raise ValueError('Introduce un peso positivo en kg, con hasta 3 decimales.')
     return f'{weight:.3f}'.replace('.',',')
 
 def qr_origen_admitido(url):
@@ -77,6 +78,8 @@ def corregir(source,output,weight,url=None,preview=None):
             raise ValueError('Formato distinto del validado: necesita revision antes de editar.')
         if 'RECTIFICACION:' in text: raise ValueError('Selecciona el original, no una copia ya rectificada.')
         doc=fitz.open(source)
+        if PROCESSING_MARKER in (doc.metadata.get('keywords') or ''):
+            doc.close(); raise ValueError('Selecciona el original, no una copia ya rectificada.')
         if doc.get_sigflags()>0:
             doc.close(); raise ValueError('El PDF contiene firmas digitales; requiere un flujo de reemision.')
         hits=localizar_pesos(doc[0].get_text('words'))
@@ -94,9 +97,6 @@ def corregir(source,output,weight,url=None,preview=None):
             if ''.join(c['text'] for c in selected)!=hit['text']:
                 doc.close(); raise ValueError('Los lectores del PDF no coinciden al identificar los pesos.')
         qr_box=(536,14,600,90)
-        note_box=(48,455,800,475)
-        if any(not c['text'].isspace() and dentro(c,note_box) for c in chars):
-            doc.close(); raise ValueError('La zona de la nota contiene texto. Necesita revision manual.')
         preserved=contenido_ajeno(chars,[caja_peso(w) for w in hits]+[qr_box])
         source_image=page.to_image(resolution=216).original
     codes=zxingcpp.read_barcodes(source_image,formats=zxingcpp.BarcodeFormat.QRCode)
@@ -116,12 +116,14 @@ def corregir(source,output,weight,url=None,preview=None):
     buffer=io.BytesIO(); c=canvas.Canvas(buffer,pagesize=(842,595))
     for w in hits:
         size=w.get('size',10 if w['top']==max(v['top'] for v in hits) else 8)
-        c.setFont('Helvetica-Bold' if size==10 else 'Helvetica',size)
+        font='Helvetica-Bold' if size==10 else 'Helvetica'
+        available=w['x1']-w['x0']
+        text_width=stringWidth(weight,font,size)
+        if text_width>available:
+            size*=available/text_width
+        c.setFont(font,size)
         baseline=w.get('baseline',w['bottom']-size*.207)
         c.drawRightString(w['x1'],595-baseline,weight)
-    date=datetime.now(ZoneInfo('Europe/Madrid')).strftime('%d/%m/%Y')
-    c.setFont('Helvetica',8)
-    c.drawString(49,128,f'RECTIFICACION: peso total corregido a {weight} kg por indicacion del expedidor. {date}.')
     if url:
         qr=qrcode.make(url,box_size=10,border=4)
         c.drawImage(ImageReader(qr.get_image()),536,519,width=64,height=64)
@@ -130,11 +132,14 @@ def corregir(source,output,weight,url=None,preview=None):
         c.setFont('Helvetica',6);c.drawCentredString(568,548,'QR pendiente de archivo')
     c.save(); overlay=fitz.open(stream=buffer.getvalue(),filetype='pdf');p.show_pdf_page(p.rect,overlay,0)
     output.parent.mkdir(parents=True,exist_ok=True)
+    metadata=dict(doc.metadata)
+    metadata['keywords']='; '.join(filter(None,[metadata.get('keywords'),PROCESSING_MARKER]))
+    doc.set_metadata(metadata)
     doc.save(output,garbage=4,deflate=True)
     with pdfplumber.open(output) as pdf:
         final=pdf.pages[0].extract_text() or ''
         result=pdf.pages[0].to_image(resolution=216).original
-        retained=contenido_ajeno(pdf.pages[0].chars,[caja_peso(w) for w in hits]+[qr_box,note_box])
+        retained=contenido_ajeno(pdf.pages[0].chars,[caja_peso(w) for w in hits]+[qr_box])
         if preserved!=retained:
             output.unlink(); raise ValueError('La verificacion detecto cambios ajenos al peso y QR. Se cancela la salida.')
         # Re-read the three output values rather than trusting the overlay.
