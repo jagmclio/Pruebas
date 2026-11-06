@@ -15,7 +15,7 @@ class PdfReaderTests(unittest.TestCase):
  def test_mismatched_totals_are_still_rejected(self):
   words=self.words();words[-1]=(*words[-1][:4],'1001,000',4,0,0)
   with self.assertRaises(ValueError):localizar_pesos(words)
- def test_multiple_items_are_still_rejected(self):
+ def test_multiple_items_with_inconsistent_total_are_rejected(self):
   with self.assertRaises(ValueError):localizar_pesos(self.words()+[(505,400,539,408,'1000,000',5,0,0)])
  def test_zero_width_characters_remain_verifiable(self):
   c={'text':'3','x0':523.93,'x1':523.93,'top':415.836,'bottom':423.836}

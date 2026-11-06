@@ -37,17 +37,65 @@ def qr_origen_admitido(url):
     return False
 
 
+def gramos(text):
+    """Parse printed Spanish weights exactly, never using binary floats."""
+    if not re.fullmatch(r'(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d{1,3})?',text):
+        raise ValueError('No se reconoce un peso del documento.')
+    return int(Decimal(text.replace('.','').replace(',','.'))*1000)
+
+
+def texto_peso(value):
+    return f'{value//1000},{value%1000:03d}'
+
+
+def repartir_pesos(values,target):
+    """Apportion the difference in integer grams; largest remainders close it."""
+    total=sum(values)
+    if not values or total<=0 or any(v<0 for v in values) or target<=0:
+        raise ValueError('No se puede repartir el peso entre las partidas.')
+    difference=abs(total-target)
+    changes=[difference*v//total for v in values]
+    pending=difference-sum(changes)
+    order=sorted(range(len(values)),key=lambda i:(difference*values[i]%total,values[i],-i),reverse=True)
+    for i in order[:pending]: changes[i]+=1
+    result=[v-change if target<total else v+change for v,change in zip(values,changes)]
+    if sum(result)!=target or any(v<0 for v in result):
+        raise ValueError('El reparto no coincide con el peso total indicado.')
+    return result
+
+
 def localizar_pesos(words):
-    """Use rendered word geometry, including PDFs with incomplete font widths."""
+    """Identify items, customer subtotals and the final total from geometry."""
     headers=[w for w in words if w[4]=='Peso(KG)']
     if len(headers)!=1: raise ValueError('No se identifica una unica columna de peso.')
     h=headers[0]
     hits=[{'text':w[4],'x0':w[0],'top':w[1],'x1':w[2],'bottom':w[3]}
           for w in words if w[1]>h[3] and h[0]-6<=w[0]<=h[2]
           and re.fullmatch(r'[\d.,]+',w[4]) and w[2]<=h[2]+20]
-    if len(hits)!=3 or len({w['text'] for w in hits})!=1:
-        raise ValueError('Se esperaban una partida y dos totales iguales. Necesita revision manual.')
-    return sorted(hits,key=lambda w:w['top'])
+    hits.sort(key=lambda w:w['top'])
+    if len(hits)<3: raise ValueError('Faltan partidas o totales en la columna de peso.')
+    labels=[w for w in words if w[4]=='Total:' and w[1]>h[3] and w[2]<h[0]]
+    if labels:
+        totals=[i for i,hit in enumerate(hits) if any(abs((hit['top']+hit['bottom'])/2-(w[1]+w[3])/2)<3 for w in labels)]
+        if len(totals)!=len(labels) or len(totals)<2 or totals[-1]!=len(hits)-1:
+            raise ValueError('No se identifican todos los subtotales y el total final.')
+    else:
+        # Compatible single-customer forms without textual total labels.
+        totals=[len(hits)-2,len(hits)-1]
+    items=[];group=[]
+    for i,hit in enumerate(hits):
+        hit['grams']=gramos(hit['text'])
+        if i not in totals:
+            hit['kind']='item';items.append(i);group.append(i)
+        else:
+            hit['kind']='total'
+            members=items[:] if i==totals[-1] else group[:]
+            if not members or sum(hits[j]['grams'] for j in members)!=hit['grams']:
+                raise ValueError('Las partidas no suman sus subtotales o el total original.')
+            hit['members']=members
+            if i!=totals[-1]: group=[]
+    if group: raise ValueError('Hay partidas sin subtotal verificado.')
+    return hits
 
 
 def dentro(c,box):
@@ -83,6 +131,12 @@ def corregir(source,output,weight,url=None,preview=None):
         if doc.get_sigflags()>0:
             doc.close(); raise ValueError('El PDF contiene firmas digitales; requiere un flujo de reemision.')
         hits=localizar_pesos(doc[0].get_text('words'))
+        items=[w for w in hits if w['kind']=='item']
+        distributed=repartir_pesos([w['grams'] for w in items],gramos(weight))
+        for hit,value in zip(items,distributed): hit['new_grams']=value
+        for hit in hits:
+            if hit['kind']=='total': hit['new_grams']=sum(hits[i]['new_grams'] for i in hit['members'])
+            hit['new_text']=texto_peso(hit['new_grams'])
         spans=[span for block in doc[0].get_text('dict')['blocks'] for line in block.get('lines',[]) for span in line['spans']]
         for hit in hits:
             matching=[span for span in spans if span['text']==hit['text'] and abs(span['bbox'][0]-hit['x0'])<.5 and abs(span['bbox'][1]-hit['top'])<.5]
@@ -118,12 +172,12 @@ def corregir(source,output,weight,url=None,preview=None):
         size=w.get('size',10 if w['top']==max(v['top'] for v in hits) else 8)
         font='Helvetica-Bold' if size==10 else 'Helvetica'
         available=w['x1']-w['x0']
-        text_width=stringWidth(weight,font,size)
+        text_width=stringWidth(w['new_text'],font,size)
         if text_width>available:
             size*=available/text_width
         c.setFont(font,size)
         baseline=w.get('baseline',w['bottom']-size*.207)
-        c.drawRightString(w['x1'],595-baseline,weight)
+        c.drawRightString(w['x1'],595-baseline,w['new_text'])
     if url:
         qr=qrcode.make(url,box_size=10,border=4)
         c.drawImage(ImageReader(qr.get_image()),536,519,width=64,height=64)
@@ -142,16 +196,16 @@ def corregir(source,output,weight,url=None,preview=None):
         retained=contenido_ajeno(pdf.pages[0].chars,[caja_peso(w) for w in hits]+[qr_box])
         if preserved!=retained:
             output.unlink(); raise ValueError('La verificacion detecto cambios ajenos al peso y QR. Se cancela la salida.')
-        # Re-read the three output values rather than trusting the overlay.
+        # Re-read every item and total and independently verify all sums.
         with fitz.open(output) as checked:
             final_hits=localizar_pesos(checked[0].get_text('words'))
-        if any(w['text']!=weight for w in final_hits):
-            output.unlink(); raise ValueError('No se han verificado los tres pesos finales.')
+        if len(final_hits)!=len(hits) or any(w['grams']!=original['new_grams'] or w['kind']!=original['kind'] for w,original in zip(final_hits,hits)):
+            output.unlink(); raise ValueError('No se han verificado todas las partidas y los totales finales.')
         found=zxingcpp.read_barcodes(result,formats=zxingcpp.BarcodeFormat.QRCode)
         if url and (len(found)!=1 or found[0].text!=url):
             output.unlink(); raise ValueError('El QR final no supera la comprobacion.')
     if preview: result.save(preview)
-    return {'output':str(output.resolve()),'peso_kg':weight,'peso_anterior':hits[0]['text'],'qr_original':original_qr,'qr_nuevo':url,'estado':'final' if url else 'borrador_pendiente_de_qr'}
+    return {'output':str(output.resolve()),'peso_kg':weight,'peso_anterior':hits[-1]['text'],'partidas_kg':[w['new_text'] for w in items],'qr_original':original_qr,'qr_nuevo':url,'estado':'final' if url else 'borrador_pendiente_de_qr'}
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
