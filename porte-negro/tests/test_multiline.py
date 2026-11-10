@@ -57,3 +57,51 @@ class MultiPdfTests(unittest.TestCase):
      self.assertNotIn('RECTIFICACION',text)
      self.assertIn('PIE ORIGINAL CONSERVADO',text)
     self.assertEqual(len(result['partidas_kg']),sum(map(len,groups)))
+
+def make_multipage_source(path):
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    import qrcode
+
+    pdf = canvas.Canvas(str(path), pagesize=(842, 595))
+    pdf.setFont('Helvetica', 10)
+    pdf.drawString(49, 550, 'Carburos - DOCUMENTO FICTICIO SIN VALIDEZ')
+    qr = qrcode.make('https://e-transport.airproducts.com/DeCA/PRUEBA-FICTICIA')
+    pdf.drawImage(ImageReader(qr.get_image()), 536, 519, width=64, height=64)
+    pdf.drawCentredString(568, 509, 'DeCA')
+    pdf.drawString(482, 260, 'Peso(KG)')
+    pdf.setFont('Helvetica', 8)
+    pdf.drawRightString(535, 240, '500,640')
+    pdf.showPage()
+    pdf.setFont('Helvetica', 10)
+    pdf.drawString(482, 430, 'Peso(KG)')
+    pdf.setFont('Helvetica', 8)
+    pdf.drawRightString(535, 410, '579,390')
+    pdf.drawString(360, 390, 'Total:')
+    pdf.drawRightString(535, 390, '1.080,030')
+    pdf.setFont('Helvetica-Bold', 10)
+    pdf.drawString(360, 370, 'Total:')
+    pdf.drawRightString(535, 370, '1.080,030')
+    pdf.drawString(548, 520, 'CABECERA DE CONTINUACIÓN')
+    pdf.save()
+
+
+class MultipagePdfTests(unittest.TestCase):
+    def test_subtotal_spanning_two_pages_and_grand_total_on_last_page(self):
+        import pymupdf
+        from corregir import localizar_documento
+
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'source.pdf'
+            output = Path(temp) / 'out.pdf'
+            make_multipage_source(source)
+            url = 'https://porte-negro.onrender.com/documentos/' + 'c' * 32 + '.pdf'
+            corregir(source, output, '980,030', url)
+            with pymupdf.open(output) as pdf:
+                self.assertEqual(len(pdf), 2)
+                hits = localizar_documento([page.get_text('words') for page in pdf])
+                self.assertEqual(
+                    [(hit['page'], hit['grams']) for hit in hits],
+                    [(0, 454286), (1, 525744), (1, 980030), (1, 980030)],
+                )
+                self.assertIn('CABECERA DE CONTINUACIÓN', pdf[1].get_text())

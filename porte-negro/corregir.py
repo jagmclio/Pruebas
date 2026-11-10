@@ -64,8 +64,8 @@ def repartir_pesos(values,target):
     return result
 
 
-def localizar_pesos(words):
-    """Identify items, customer subtotals and the final total from geometry."""
+def pesos_de_pagina(words):
+    """Locate gross weights and total labels on a single page."""
     headers=[w for w in words if w[4]=='Peso(KG)']
     if len(headers)!=1: raise ValueError('No se identifica una unica columna de peso.')
     h=headers[0]
@@ -73,15 +73,37 @@ def localizar_pesos(words):
           for w in words if w[1]>h[3] and h[0]-6<=w[0]<=h[2]
           and re.fullmatch(r'[\d.,]+',w[4]) and w[2]<=h[2]+20]
     hits.sort(key=lambda w:w['top'])
-    if len(hits)<3: raise ValueError('Faltan partidas o totales en la columna de peso.')
     labels=[w for w in words if w[4]=='Total:' and w[1]>h[3] and w[2]<h[0]]
-    if labels:
-        totals=[i for i,hit in enumerate(hits) if any(abs((hit['top']+hit['bottom'])/2-(w[1]+w[3])/2)<3 for w in labels)]
-        if len(totals)!=len(labels) or len(totals)<2 or totals[-1]!=len(hits)-1:
-            raise ValueError('No se identifican todos los subtotales y el total final.')
-    else:
+    totals=[i for i,hit in enumerate(hits) if any(
+        abs((hit['top']+hit['bottom'])/2-(w[1]+w[3])/2)<3 for w in labels)]
+    if len(totals)!=len(labels):
+        raise ValueError('No se identifican todos los subtotales de una página.')
+    return hits,totals
+
+
+def localizar_pesos(words):
+    """Retain the single-page entry point."""
+    return localizar_documento([words])
+
+
+def localizar_documento(pages):
+    """Validate every subtotal and the grand total in document order."""
+    hits=[];totals=[]
+    for page_number,words in enumerate(pages):
+        page_hits,page_totals=pesos_de_pagina(words)
+        if not page_hits:
+            raise ValueError('Faltan pesos en una página del documento.')
+        totals.extend(len(hits)+index for index in page_totals)
+        for hit in page_hits:
+            hit['page']=page_number
+        hits.extend(page_hits)
+    if len(hits)<3:
+        raise ValueError('Faltan partidas o totales en la columna de peso.')
+    if not totals and len(pages)==1:
         # Compatible single-customer forms without textual total labels.
         totals=[len(hits)-2,len(hits)-1]
+    if len(totals)<2 or totals[-1]!=len(hits)-1 or hits[-1]['page']!=len(pages)-1:
+        raise ValueError('No se identifica el total general en la última página.')
     items=[];group=[]
     for i,hit in enumerate(hits):
         hit['grams']=gramos(hit['text'])
@@ -115,97 +137,147 @@ def contenido_ajeno(chars,boxes):
                    and not any(dentro(c,box) for box in boxes))
 
 
+QR_BOX=(536,14,600,90)
+
+
+def leer_qr(image):
+    return zxingcpp.read_barcodes(image,formats=zxingcpp.BarcodeFormat.QRCode)
+
+
+def verificar_original(page,rendered,hits,qr_box):
+    spans=[span for block in rendered.get_text('dict')['blocks']
+           for line in block.get('lines',[]) for span in line['spans']]
+    for hit in hits:
+        matching=[span for span in spans if span['text']==hit['text']
+                  and abs(span['bbox'][0]-hit['x0'])<.5
+                  and abs(span['bbox'][1]-hit['top'])<.5]
+        if len(matching)==1:
+            hit['baseline']=matching[0]['origin'][1]
+            hit['size']=matching[0]['size']
+        selected=sorted([c for c in page.chars if not c['text'].isspace()
+                         and dentro(c,caja_peso(hit))],key=lambda c:c['x0'])
+        if ''.join(c['text'] for c in selected)!=hit['text']:
+            raise ValueError('Los lectores del PDF no coinciden al identificar los pesos.')
+    boxes=[caja_peso(hit) for hit in hits]
+    if qr_box:
+        boxes.append(qr_box)
+    return boxes,contenido_ajeno(page.chars,boxes)
+
+
+def escribir_pagina(page,hits,qr,url):
+    for hit in hits:
+        page.add_redact_annot(fitz.Rect(caja_peso(hit)),fill=False)
+    if qr:
+        page.add_redact_annot(fitz.Rect(QR_BOX),fill=(1,1,1))
+    page.apply_redactions(images=2,graphics=0)
+    height=page.rect.height
+    buffer=io.BytesIO()
+    c=canvas.Canvas(buffer,pagesize=(page.rect.width,height))
+    for hit in hits:
+        size=hit.get('size',10 if hit.get('grand_total') else 8)
+        font='Helvetica-Bold' if size==10 else 'Helvetica'
+        available=hit['x1']-hit['x0']
+        text_width=stringWidth(hit['new_text'],font,size)
+        if text_width>available:
+            size*=available/text_width
+        c.setFont(font,size)
+        baseline=hit.get('baseline',hit['bottom']-size*.207)
+        c.drawRightString(hit['x1'],height-baseline,hit['new_text'])
+    if qr:
+        if url:
+            code=qrcode.make(url,box_size=10,border=4)
+            c.drawImage(ImageReader(code.get_image()),536,height-76,width=64,height=64)
+            c.setFont('Helvetica-Bold',10)
+            c.drawCentredString(568,height-86,'DeCA')
+        else:
+            c.setFont('Helvetica',6)
+            c.drawCentredString(568,height-47,'QR pendiente de archivo')
+    c.save()
+    with fitz.open(stream=buffer.getvalue(),filetype='pdf') as overlay:
+        page.show_pdf_page(page.rect,overlay,0)
+
+
 def corregir(source,output,weight,url=None,preview=None):
     weight=peso_real(weight)
     source,output=Path(source),Path(output)
-    if source.resolve()==output.resolve(): raise ValueError('El original debe conservarse.')
-    with pdfplumber.open(source) as pdf:
-        if len(pdf.pages)!=1: raise ValueError('Formato no admitido: se requiere una sola pagina.')
-        page=pdf.pages[0]; text=page.extract_text() or ''; words=page.extract_words()
-        if abs(page.width-842)>1 or abs(page.height-595)>1 or 'Carburos' not in text or 'Peso(KG)' not in text:
-            raise ValueError('Formato distinto del validado: necesita revision antes de editar.')
-        if 'RECTIFICACION:' in text: raise ValueError('Selecciona el original, no una copia ya rectificada.')
-        doc=fitz.open(source)
-        if PROCESSING_MARKER in (doc.metadata.get('keywords') or ''):
-            doc.close(); raise ValueError('Selecciona el original, no una copia ya rectificada.')
-        if doc.get_sigflags()>0:
-            doc.close(); raise ValueError('El PDF contiene firmas digitales; requiere un flujo de reemision.')
-        hits=localizar_pesos(doc[0].get_text('words'))
-        items=[w for w in hits if w['kind']=='item']
-        distributed=repartir_pesos([w['grams'] for w in items],gramos(weight))
-        for hit,value in zip(items,distributed): hit['new_grams']=value
-        for hit in hits:
-            if hit['kind']=='total': hit['new_grams']=sum(hits[i]['new_grams'] for i in hit['members'])
-            hit['new_text']=texto_peso(hit['new_grams'])
-        spans=[span for block in doc[0].get_text('dict')['blocks'] for line in block.get('lines',[]) for span in line['spans']]
-        for hit in hits:
-            matching=[span for span in spans if span['text']==hit['text'] and abs(span['bbox'][0]-hit['x0'])<.5 and abs(span['bbox'][1]-hit['top'])<.5]
-            if len(matching)==1:
-                hit['baseline']=matching[0]['origin'][1]
-                hit['size']=matching[0]['size']
-        chars=page.chars
-        # A second PDF reader must confirm every selected weight, even when
-        # its word extraction fuses a weight with UN or splits zero-width glyphs.
-        for hit in hits:
-            selected=sorted([c for c in chars if not c['text'].isspace() and dentro(c,caja_peso(hit))],key=lambda c:c['x0'])
-            if ''.join(c['text'] for c in selected)!=hit['text']:
-                doc.close(); raise ValueError('Los lectores del PDF no coinciden al identificar los pesos.')
-        qr_box=(536,14,600,90)
-        preserved=contenido_ajeno(chars,[caja_peso(w) for w in hits]+[qr_box])
-        source_image=page.to_image(resolution=216).original
-    codes=zxingcpp.read_barcodes(source_image,formats=zxingcpp.BarcodeFormat.QRCode)
-    if len(codes)!=1: raise ValueError('No se identifica un unico QR original.')
-    original_qr=codes[0].text
-    if not qr_origen_admitido(original_qr):
-        raise ValueError('El QR no corresponde al formato de carta validado.')
+    if source.resolve()==output.resolve():
+        raise ValueError('El original debe conservarse.')
     if url:
         parsed=urlsplit(url)
         if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or not re.fullmatch(r'/documentos/[a-f0-9]{32}\.pdf',parsed.path):
             raise ValueError('El QR nuevo requiere la dirección HTTPS del PDF en el archivo digital.')
-    p=doc[0]
-    for w in hits:
-        p.add_redact_annot(fitz.Rect(caja_peso(w)),fill=False)
-    p.add_redact_annot(fitz.Rect(536,14,600,90),fill=(1,1,1))
-    p.apply_redactions(images=2,graphics=0)
-    buffer=io.BytesIO(); c=canvas.Canvas(buffer,pagesize=(842,595))
-    for w in hits:
-        size=w.get('size',10 if w['top']==max(v['top'] for v in hits) else 8)
-        font='Helvetica-Bold' if size==10 else 'Helvetica'
-        available=w['x1']-w['x0']
-        text_width=stringWidth(w['new_text'],font,size)
-        if text_width>available:
-            size*=available/text_width
-        c.setFont(font,size)
-        baseline=w.get('baseline',w['bottom']-size*.207)
-        c.drawRightString(w['x1'],595-baseline,w['new_text'])
-    if url:
-        qr=qrcode.make(url,box_size=10,border=4)
-        c.drawImage(ImageReader(qr.get_image()),536,519,width=64,height=64)
-        c.setFont('Helvetica-Bold',10);c.drawCentredString(568,509,'DeCA')
-    else:
-        c.setFont('Helvetica',6);c.drawCentredString(568,548,'QR pendiente de archivo')
-    c.save(); overlay=fitz.open(stream=buffer.getvalue(),filetype='pdf');p.show_pdf_page(p.rect,overlay,0)
-    output.parent.mkdir(parents=True,exist_ok=True)
-    metadata=dict(doc.metadata)
-    metadata['keywords']='; '.join(filter(None,[metadata.get('keywords'),PROCESSING_MARKER]))
-    doc.set_metadata(metadata)
-    doc.save(output,garbage=4,deflate=True)
-    with pdfplumber.open(output) as pdf:
-        final=pdf.pages[0].extract_text() or ''
-        result=pdf.pages[0].to_image(resolution=216).original
-        retained=contenido_ajeno(pdf.pages[0].chars,[caja_peso(w) for w in hits]+[qr_box])
-        if preserved!=retained:
-            output.unlink(); raise ValueError('La verificacion detecto cambios ajenos al peso y QR. Se cancela la salida.')
-        # Re-read every item and total and independently verify all sums.
-        with fitz.open(output) as checked:
-            final_hits=localizar_pesos(checked[0].get_text('words'))
-        if len(final_hits)!=len(hits) or any(w['grams']!=original['new_grams'] or w['kind']!=original['kind'] for w,original in zip(final_hits,hits)):
-            output.unlink(); raise ValueError('No se han verificado todas las partidas y los totales finales.')
-        found=zxingcpp.read_barcodes(result,formats=zxingcpp.BarcodeFormat.QRCode)
-        if url and (len(found)!=1 or found[0].text!=url):
-            output.unlink(); raise ValueError('El QR final no supera la comprobacion.')
-    if preview: result.save(preview)
-    return {'output':str(output.resolve()),'peso_kg':weight,'peso_anterior':hits[-1]['text'],'partidas_kg':[w['new_text'] for w in items],'qr_original':original_qr,'qr_nuevo':url,'estado':'final' if url else 'borrador_pendiente_de_qr'}
+    checks=[]
+    with fitz.open(source) as doc,pdfplumber.open(source) as pdf:
+        if PROCESSING_MARKER in (doc.metadata.get('keywords') or ''):
+            raise ValueError('Selecciona el original, no una copia ya rectificada.')
+        if doc.get_sigflags()>0:
+            raise ValueError('El PDF contiene firmas digitales; requiere un flujo de reemision.')
+        for index,page in enumerate(pdf.pages):
+            page_text=page.extract_text() or ''
+            if abs(page.width-842)>1 or abs(page.height-595)>1 or 'Peso(KG)' not in page_text or (index==0 and 'Carburos' not in page_text):
+                raise ValueError('Formato distinto del validado: necesita revision antes de editar.')
+            if 'RECTIFICACION:' in page_text:
+                raise ValueError('Selecciona el original, no una copia ya rectificada.')
+        hits=localizar_documento([page.get_text('words') for page in doc])
+        hits[-1]['grand_total']=True
+        items=[hit for hit in hits if hit['kind']=='item']
+        distributed=repartir_pesos([hit['grams'] for hit in items],gramos(weight))
+        for hit,value in zip(items,distributed):
+            hit['new_grams']=value
+        for hit in hits:
+            if hit['kind']=='total':
+                hit['new_grams']=sum(hits[i]['new_grams'] for i in hit['members'])
+            hit['new_text']=texto_peso(hit['new_grams'])
+        original_qr=None
+        for index,page in enumerate(pdf.pages):
+            page_hits=[hit for hit in hits if hit['page']==index]
+            codes=leer_qr(page.to_image(resolution=216).original)
+            if index==0:
+                if len(codes)!=1 or not qr_origen_admitido(codes[0].text):
+                    raise ValueError('No se identifica un QR original del formato validado.')
+                original_qr=codes[0].text
+            if codes and (len(codes)!=1 or codes[0].text!=original_qr):
+                raise ValueError('Se encontró un QR distinto en otra página.')
+            if codes:
+                position=codes[0].position
+                corners=[position.top_left,position.top_right,position.bottom_left,position.bottom_right]
+                if any(not (QR_BOX[0]-1<=point.x/3<=QR_BOX[2]+1
+                            and QR_BOX[1]-1<=point.y/3<=QR_BOX[3]+1) for point in corners):
+                    raise ValueError('El QR está fuera de la zona prevista.')
+            has_qr=bool(codes)
+            boxes,preserved=verificar_original(page,doc[index],page_hits,QR_BOX if has_qr else None)
+            checks.append((boxes,preserved,has_qr))
+            escribir_pagina(doc[index],page_hits,has_qr,url)
+        output.parent.mkdir(parents=True,exist_ok=True)
+        metadata=dict(doc.metadata)
+        metadata['keywords']='; '.join(filter(None,[metadata.get('keywords'),PROCESSING_MARKER]))
+        doc.set_metadata(metadata)
+        doc.save(output,garbage=4,deflate=True)
+    try:
+        with fitz.open(output) as checked,pdfplumber.open(output) as pdf:
+            final_hits=localizar_documento([page.get_text('words') for page in checked])
+            if len(checked)!=len(checks) or len(final_hits)!=len(hits) or any(
+                (final['grams'],final['kind'],final['page'])!=(original['new_grams'],original['kind'],original['page'])
+                for final,original in zip(final_hits,hits)
+            ):
+                raise ValueError('No se han verificado todas las partidas y los totales finales.')
+            for index,(page,(boxes,preserved,has_qr)) in enumerate(zip(pdf.pages,checks)):
+                if contenido_ajeno(page.chars,boxes)!=preserved:
+                    raise ValueError('La verificacion detecto cambios ajenos al peso y QR. Se cancela la salida.')
+                if has_qr or (preview and index==0):
+                    result=page.to_image(resolution=216).original
+                    if url and has_qr:
+                        found=leer_qr(result)
+                        if len(found)!=1 or found[0].text!=url:
+                            raise ValueError('El QR final no supera la comprobacion.')
+                    if preview and index==0:
+                        result.save(preview)
+    except Exception:
+        output.unlink(missing_ok=True)
+        raise
+    return {'output':str(output.resolve()),'peso_kg':weight,'peso_anterior':hits[-1]['text'],
+            'partidas_kg':[hit['new_text'] for hit in items],'qr_original':original_qr,
+            'qr_nuevo':url,'estado':'final' if url else 'borrador_pendiente_de_qr'}
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
